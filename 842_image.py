@@ -73,34 +73,49 @@ def plot_trial(left, right, condition, trial_type, trial_idx):
     plt.savefig(os.path.join(output_dir, filename), dpi=150)
     plt.close()
 
+# --- Generate data sets first ---
+num_instances_per_trial_type = 4  # number of different data sets per trial type
+data_sets = {}  # Store data sets: {(trial_type, instance_idx): (left, right)}
+
+print("Generating data sets...")
+for trial_type in trial_types:
+    for instance in range(num_instances_per_trial_type):
+        left, right = generate_trial_data(trial_type)
+        # Randomly swap left/right for some instances
+        if np.random.rand() > 0.5:
+            left, right = right, left
+        data_sets[(trial_type, instance)] = (left.copy(), right.copy())
+
+print(f"Generated {len(data_sets)} data sets ({num_instances_per_trial_type} per trial type)")
+
 # --- CSV log file ---
 csv_path = os.path.join(output_dir, "trial_sd_log.csv")
 with open(csv_path, "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["TrialIdx", "TrialType", "Jitter", "Whisker", "Left_SD", "Right_SD", "More_Variable"])
+    writer.writerow(["TrialIdx", "TrialType", "Instance", "Jitter", "Whisker", "Left_SD", "Right_SD", "More_Variable"])
     
     trial_idx = 1
-    for condition in conditions:
-        for trial_type in trial_types:
-            for instance in range(4):  # four instances per trial type
-                left, right = generate_trial_data(trial_type)
-                if np.random.rand() > 0.5:
-                    left, right = right, left
-                
-                # calculate SDs
-                left_sd = np.std(left, ddof=1)
-                right_sd = np.std(right, ddof=1)
-                
-                if left_sd > right_sd:
-                    more_var = "Left"
-                elif right_sd > left_sd:
-                    more_var = "Right"
-                else:
-                    more_var = "Equal"
-                
+    # For each data set, create all condition combinations
+    for trial_type in trial_types:
+        for instance in range(num_instances_per_trial_type):
+            left, right = data_sets[(trial_type, instance)]
+            
+            # Calculate SDs (same for all conditions using this data)
+            left_sd = np.std(left, ddof=1)
+            right_sd = np.std(right, ddof=1)
+            
+            if left_sd > right_sd:
+                more_var = "Left"
+            elif right_sd > left_sd:
+                more_var = "Right"
+            else:
+                more_var = "Equal"
+            
+            # Generate plots for all conditions using the same data
+            for condition in conditions:
                 # log one row
                 writer.writerow([
-                    trial_idx, trial_type, condition[0], condition[1],
+                    trial_idx, trial_type, instance, condition[0], condition[1],
                     f"{left_sd:.3f}", f"{right_sd:.3f}", more_var
                 ])
                 
