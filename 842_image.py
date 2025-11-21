@@ -11,10 +11,14 @@ output_dir = os.path.join(script_dir, "boxplot_stimuli")
 os.makedirs(output_dir, exist_ok=True)
 
 conditions = [
-    ("Jitter On", "Tukey"),
-    ("Jitter On", "MinMax"),
-    ("Jitter Off", "Tukey"),
-    ("Jitter Off", "MinMax")
+    ("Jitter On", "Tukey", "Points On"),
+    ("Jitter On", "Tukey", "Points Off"),
+    ("Jitter On", "MinMax", "Points On"),
+    ("Jitter On", "MinMax", "Points Off"),
+    ("Jitter Off", "Tukey", "Points On"),
+    ("Jitter Off", "Tukey", "Points Off"),
+    ("Jitter Off", "MinMax", "Points On"),
+    ("Jitter Off", "MinMax", "Points Off")
 ]
 
 trial_types = ["Different SDs", "Outlier vs No-Outlier", "Skew vs Symmetric", "Unequal Sample Size"]
@@ -39,7 +43,7 @@ def generate_trial_data(trial_type):
 
 # --- Function to plot boxplots ---
 def plot_trial(left, right, condition, trial_type, trial_idx):
-    jitter, whisker = condition
+    jitter, whisker, points = condition
     plt.figure(figsize=(6,4))
     
     positions = [1, 2]
@@ -56,20 +60,21 @@ def plot_trial(left, right, condition, trial_type, trial_idx):
                 whis=whis_value,
                 zorder=1)  
     
-    # Add scatter points (always on top, fixed color)
-    point_color = "seagreen"
-    for i, data in enumerate([left, right]):
-        if jitter == "Jitter On":
-            x = np.random.normal(positions[i], 0.05, size=len(data))
-        else:
-            x = np.full(len(data), positions[i]) 
-        plt.scatter(x, data, alpha=0.6, color=point_color, s=15, zorder=2) 
+    # Add scatter points only if Points On
+    if points == "Points On":
+        point_color = "seagreen"
+        for i, data in enumerate([left, right]):
+            if jitter == "Jitter On":
+                x = np.random.normal(positions[i], 0.05, size=len(data))
+            else:
+                x = np.full(len(data), positions[i]) 
+            plt.scatter(x, data, alpha=0.6, color=point_color, s=15, zorder=2) 
     
     plt.ylabel("Value")
     plt.xticks(positions, ["Left", "Right"])
-    plt.title(f"Trial {trial_idx} | {jitter} x {whisker}")
+    plt.title(f"Trial {trial_idx} | {jitter} x {whisker} x {points}")
     
-    filename = f"{trial_idx}_{trial_type.replace(' ', '_')}_{jitter.replace(' ','')}_{whisker}.png"
+    filename = f"{trial_idx}_{trial_type.replace(' ', '_')}_{jitter.replace(' ','')}_{whisker}_{points.replace(' ', '')}.png"
     plt.savefig(os.path.join(output_dir, filename), dpi=150)
     plt.close()
 
@@ -92,7 +97,7 @@ print(f"Generated {len(data_sets)} data sets ({num_instances_per_trial_type} per
 csv_path = os.path.join(output_dir, "trial_sd_log.csv")
 with open(csv_path, "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["TrialIdx", "TrialType", "Instance", "Jitter", "Whisker", "Left_SD", "Right_SD", "More_Variable"])
+    writer.writerow(["TrialIdx", "TrialType", "Instance", "Jitter", "Whisker", "Points", "Left_SD", "Right_SD", "More_Variable"])
     
     trial_idx = 1
     # For each data set, create all condition combinations
@@ -115,7 +120,7 @@ with open(csv_path, "w", newline="") as f:
             for condition in conditions:
                 # log one row
                 writer.writerow([
-                    trial_idx, trial_type, instance, condition[0], condition[1],
+                    trial_idx, trial_type, instance, condition[0], condition[1], condition[2],
                     f"{left_sd:.3f}", f"{right_sd:.3f}", more_var
                 ])
                 
