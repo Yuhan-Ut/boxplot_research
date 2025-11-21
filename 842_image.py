@@ -1,0 +1,112 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+import csv
+
+# --- Configuration ---
+np.random.seed(2025)
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+output_dir = os.path.join(script_dir, "boxplot_stimuli")
+os.makedirs(output_dir, exist_ok=True)
+
+conditions = [
+    ("Jitter On", "Tukey"),
+    ("Jitter On", "MinMax"),
+    ("Jitter Off", "Tukey"),
+    ("Jitter Off", "MinMax")
+]
+
+trial_types = ["Different SDs", "Outlier vs No-Outlier", "Skew vs Symmetric", "Unequal Sample Size"]
+
+# --- Function to generate data ---
+def generate_trial_data(trial_type):
+    mu = 5
+    if trial_type == "Different SDs":
+        left = np.random.normal(mu, 1.0, 50)
+        right = np.random.normal(mu, 2.0, 50)
+    elif trial_type == "Outlier vs No-Outlier":
+        left = np.random.normal(mu, 1.0, 50)
+        left = np.append(left, [mu+8, mu+10, mu-8, mu-10, mu+12])  # extreme outliers
+        right = np.random.normal(mu, 1.2, 50)
+    elif trial_type == "Skew vs Symmetric":
+        left = np.random.gamma(shape=2.0, scale=1.0, size=50) + mu - 2
+        right = np.random.normal(mu, 1.0, 50)
+    elif trial_type == "Unequal Sample Size":
+        left = np.random.normal(mu, 1.0, 80)
+        right = np.random.normal(mu, 1.2, 20)
+    return left, right
+
+# --- Function to plot boxplots ---
+def plot_trial(left, right, condition, trial_type, trial_idx):
+    jitter, whisker = condition
+    plt.figure(figsize=(6,4))
+    
+    positions = [1, 2]
+    whis_value = 1.5 if whisker == "Tukey" else (0, 100) 
+    
+    # Plot boxplots first
+    plt.boxplot([left, right],
+                positions=positions,
+                patch_artist=True,
+                widths=0.6,
+                flierprops=dict(marker='o', color='red', alpha=0.5),
+                whiskerprops=dict(color='black'),
+                showmeans=False,
+                whis=whis_value,
+                zorder=1)  
+    
+    # Add scatter points (always on top, fixed color)
+    point_color = "seagreen"
+    for i, data in enumerate([left, right]):
+        if jitter == "Jitter On":
+            x = np.random.normal(positions[i], 0.05, size=len(data))
+        else:
+            x = np.full(len(data), positions[i]) 
+        plt.scatter(x, data, alpha=0.6, color=point_color, s=15, zorder=2) 
+    
+    plt.ylabel("Value")
+    plt.xticks(positions, ["Left", "Right"])
+    plt.title(f"Trial {trial_idx} | {jitter} x {whisker}")
+    
+    filename = f"{trial_idx}_{trial_type.replace(' ', '_')}_{jitter.replace(' ','')}_{whisker}.png"
+    plt.savefig(os.path.join(output_dir, filename), dpi=150)
+    plt.close()
+
+# --- CSV log file ---
+csv_path = os.path.join(output_dir, "trial_sd_log.csv")
+with open(csv_path, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["TrialIdx", "TrialType", "Jitter", "Whisker", "Left_SD", "Right_SD", "More_Variable"])
+    
+    trial_idx = 1
+    for condition in conditions:
+        for trial_type in trial_types:
+            for instance in range(4):  # four instances per trial type
+                left, right = generate_trial_data(trial_type)
+                if np.random.rand() > 0.5:
+                    left, right = right, left
+                
+                # calculate SDs
+                left_sd = np.std(left, ddof=1)
+                right_sd = np.std(right, ddof=1)
+                
+                if left_sd > right_sd:
+                    more_var = "Left"
+                elif right_sd > left_sd:
+                    more_var = "Right"
+                else:
+                    more_var = "Equal"
+                
+                # log one row
+                writer.writerow([
+                    trial_idx, trial_type, condition[0], condition[1],
+                    f"{left_sd:.3f}", f"{right_sd:.3f}", more_var
+                ])
+                
+                # save figure
+                plot_trial(left, right, condition, trial_type, trial_idx)
+                trial_idx += 1
+
+print(f"All boxplots with trial indices saved in {output_dir}")
+print(f"SD log saved to {csv_path}")
