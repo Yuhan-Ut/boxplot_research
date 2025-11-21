@@ -12,13 +12,11 @@ os.makedirs(output_dir, exist_ok=True)
 
 conditions = [
     ("Jitter On", "Tukey", "Points On"),
-    ("Jitter On", "Tukey", "Points Off"),
     ("Jitter On", "MinMax", "Points On"),
-    ("Jitter On", "MinMax", "Points Off"),
     ("Jitter Off", "Tukey", "Points On"),
-    ("Jitter Off", "Tukey", "Points Off"),
     ("Jitter Off", "MinMax", "Points On"),
-    ("Jitter Off", "MinMax", "Points Off")
+    ("Jitter On", "Tukey", "Points Off"),  # Jitter doesn't matter when points are off, but kept for consistency
+    ("Jitter On", "MinMax", "Points Off")   # Jitter doesn't matter when points are off, but kept for consistency
 ]
 
 trial_types = ["Different SDs", "Outlier vs No-Outlier", "Skew vs Symmetric", "Unequal Sample Size"]
@@ -40,6 +38,33 @@ def generate_trial_data(trial_type):
         left = np.random.normal(mu, 1.0, 80)
         right = np.random.normal(mu, 1.2, 20)
     return left, right
+
+# --- Function to determine design folder based on condition ---
+def get_design_folder(condition):
+    """Organize plots into folders by whisker type and point/jitter combination.
+    
+    Structure:
+    - Tukey/
+      - JitterOn_PointsOn/
+      - JitterOff_PointsOn/
+      - PointsOff/
+    - MinMax/
+      - JitterOn_PointsOn/
+      - JitterOff_PointsOn/
+      - PointsOff/
+    """
+    jitter, whisker, points = condition
+    
+    # Determine the point/jitter combination folder name
+    if points == "Points Off":
+        combo_folder = "PointsOff"
+    elif jitter == "Jitter On":
+        combo_folder = "JitterOn_PointsOn"
+    else:  # Jitter Off, Points On
+        combo_folder = "JitterOff_PointsOn"
+    
+    # Return the full path: WhiskerType/ComboFolder
+    return os.path.join(whisker, combo_folder)
 
 # --- Function to plot boxplots ---
 def plot_trial(left, right, condition, trial_type, trial_idx):
@@ -74,8 +99,15 @@ def plot_trial(left, right, condition, trial_type, trial_idx):
     plt.xticks(positions, ["Left", "Right"])
     plt.title(f"Trial {trial_idx} | {jitter} x {whisker} x {points}")
     
+    # Determine which design folder this plot belongs to
+    design_folder = get_design_folder(condition)
     filename = f"{trial_idx}_{trial_type.replace(' ', '_')}_{jitter.replace(' ','')}_{whisker}_{points.replace(' ', '')}.png"
-    plt.savefig(os.path.join(output_dir, filename), dpi=150)
+    
+    # Save the plot to the appropriate folder
+    design_dir = os.path.join(output_dir, design_folder)
+    os.makedirs(design_dir, exist_ok=True)
+    plt.savefig(os.path.join(design_dir, filename), dpi=150)
+    
     plt.close()
 
 # --- Generate data sets first ---
