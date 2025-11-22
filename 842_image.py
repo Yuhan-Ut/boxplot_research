@@ -103,10 +103,16 @@ def plot_trial(left, right, condition, trial_type, trial_idx):
     design_folder = get_design_folder(condition)
     filename = f"{trial_idx}_{trial_type.replace(' ', '_')}_{jitter.replace(' ','')}_{whisker}_{points.replace(' ', '')}.png"
     
-    # Save the plot to the appropriate folder
+    # Save the plot to the organized folder structure
     design_dir = os.path.join(output_dir, design_folder)
     os.makedirs(design_dir, exist_ok=True)
-    plt.savefig(os.path.join(design_dir, filename), dpi=150)
+    filepath = os.path.join(design_dir, filename)
+    plt.savefig(filepath, dpi=150)
+    
+    # Also save to the "All" folder for convenience
+    all_dir = os.path.join(output_dir, "All")
+    os.makedirs(all_dir, exist_ok=True)
+    plt.savefig(os.path.join(all_dir, filename), dpi=150)
     
     plt.close()
 
