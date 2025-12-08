@@ -1,0 +1,25 @@
+TrialIdx,TrialType,Instance,Whisker,Points,Jitter,Left_SD,Right_SD,More_Variable
+1,Different SDs,0,Tukey,Points On,Jitter On,1.785,0.918,Left
+2,Different SDs,0,MinMax,Points On,Jitter On,1.785,0.918,Left
+3,Different SDs,0,Tukey,Points On,Jitter Off,1.785,0.918,Left
+4,Different SDs,0,MinMax,Points On,Jitter Off,1.785,0.918,Left
+5,Different SDs,0,Tukey,Points Off,,1.785,0.918,Left
+6,Different SDs,0,MinMax,Points Off,,1.785,0.918,Left
+7,Outlier vs No-Outlier,0,Tukey,Points On,Jitter On,1.175,3.084,Right
+8,Outlier vs No-Outlier,0,MinMax,Points On,Jitter On,1.175,3.084,Right
+9,Outlier vs No-Outlier,0,Tukey,Points On,Jitter Off,1.175,3.084,Right
+10,Outlier vs No-Outlier,0,MinMax,Points On,Jitter Off,1.175,3.084,Right
+11,Outlier vs No-Outlier,0,Tukey,Points Off,,1.175,3.084,Right
+12,Outlier vs No-Outlier,0,MinMax,Points Off,,1.175,3.084,Right
+13,Skew vs Symmetric,0,Tukey,Points On,Jitter On,1.227,0.962,Left
+14,Skew vs Symmetric,0,MinMax,Points On,Jitter On,1.227,0.962,Left
+15,Skew vs Symmetric,0,Tukey,Points On,Jitter Off,1.227,0.962,Left
+16,Skew vs Symmetric,0,MinMax,Points On,Jitter Off,1.227,0.962,Left
+17,Skew vs Symmetric,0,Tukey,Points Off,,1.227,0.962,Left
+18,Skew vs Symmetric,0,MinMax,Points Off,,1.227,0.962,Left
+19,Unequal Sample Size,0,Tukey,Points On,Jitter On,0.981,1.209,Right
+20,Unequal Sample Size,0,MinMax,Points On,Jitter On,0.981,1.209,Right
+21,Unequal Sample Size,0,Tukey,Points On,Jitter Off,0.981,1.209,Right
+22,Unequal Sample Size,0,MinMax,Points On,Jitter Off,0.981,1.209,Right
+23,Unequal Sample Size,0,Tukey,Points Off,,0.981,1.209,Right
+24,Unequal Sample Size,0,MinMax,Points Off,,0.981,1.209,Right
