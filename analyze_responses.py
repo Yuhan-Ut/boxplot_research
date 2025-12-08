@@ -258,7 +258,10 @@ def prepare_long_form(
             more_variable = trial_meta["More_Variable"]
             is_correct = np.nan
             if answer_choice:
-                is_correct = 1.0 if answer_choice == more_variable else 0.0
+                if more_variable == "Equal":
+                    is_correct = 1.0 if answer_choice in ["Equal", "Right"] else 0.0
+                else:
+                    is_correct = 1.0 if answer_choice == more_variable else 0.0
 
             records.append(
                 {
