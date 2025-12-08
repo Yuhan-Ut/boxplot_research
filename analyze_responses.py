@@ -8,6 +8,7 @@ produces summary tables plus diagnostic plots.
 from __future__ import annotations
 
 import csv
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -28,6 +30,8 @@ OUTPUT_DIR = PROJECT_ROOT / "analysis_outputs"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 sns.set_theme(style="whitegrid", palette="colorblind")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+logger = logging.getLogger(__name__)
 
 
 # --- Helper structures -------------------------------------------------------
@@ -242,23 +246,19 @@ def prepare_long_form(
             else:
                 true_ratio = left_sd / right_sd
 
-            abs_ratio_error = np.nan
-            pct_ratio_error = np.nan
-            log_ratio_error = np.nan
             l2_loss = np.nan
-            if ratio_guess is not None and true_ratio and true_ratio > 0 and ratio_guess > 0:
-                abs_ratio_error = abs(ratio_guess - true_ratio)
-                pct_ratio_error = abs_ratio_error / true_ratio
-                log_ratio_error = abs(math.log(ratio_guess) - math.log(true_ratio))
+            if (
+                ratio_guess is not None
+                and pd.notna(true_ratio)
+                and true_ratio > 0
+                and ratio_guess > 0
+            ):
                 l2_loss = (ratio_guess - true_ratio) ** 2
 
             more_variable = trial_meta["More_Variable"]
             is_correct = np.nan
             if answer_choice:
-                if more_variable == "Equal":
-                    is_correct = 1.0 if answer_choice == "Equal" else 0.0
-                else:
-                    is_correct = 1.0 if answer_choice == more_variable else 0.0
+                is_correct = 1.0 if answer_choice == more_variable else 0.0
 
             records.append(
                 {
@@ -282,9 +282,6 @@ def prepare_long_form(
                     "is_correct": is_correct,
                     "confidence": confidence,
                     "ratio_guess": ratio_guess,
-                    "abs_ratio_error": abs_ratio_error,
-                    "pct_ratio_error": pct_ratio_error,
-                    "log_ratio_error": log_ratio_error,
                     "ratio_l2_loss": l2_loss,
                     "comment": comment_val,
                 }
@@ -311,6 +308,12 @@ def prepare_long_form(
 def summarize(long_df: pd.DataFrame) -> dict:
     """Create aggregated tables used for reporting and plotting."""
 
+    # Only treat respondents with at least one scorable answer as participants.
+    valid_mask = long_df["is_correct"].notna()
+    valid_participants = long_df.loc[valid_mask, "response_id"].nunique()
+
+    print(long_df)
+
     design_summary = (
         long_df.groupby("plot_type", observed=True)
         .agg(
@@ -318,13 +321,11 @@ def summarize(long_df: pd.DataFrame) -> dict:
             accuracy=("is_correct", "mean"),
             mean_confidence=("confidence", "mean"),
             median_ratio_guess=("ratio_guess", "median"),
-            mean_abs_ratio_error=("abs_ratio_error", "mean"),
-            median_pct_ratio_error=("pct_ratio_error", "median"),
             mean_l2_loss=("ratio_l2_loss", "mean"),
             mean_norm_l2_loss=("ratio_l2_loss_norm", "mean"),
         )
         .reset_index()
-        .sort_values("mean_norm_l2_loss", ascending=True)
+        .sort_values("mean_l2_loss", ascending=True)
     )
 
     trial_type_summary = (
@@ -333,17 +334,16 @@ def summarize(long_df: pd.DataFrame) -> dict:
             responses=("is_correct", "count"),
             accuracy=("is_correct", "mean"),
             mean_confidence=("confidence", "mean"),
-            median_pct_ratio_error=("pct_ratio_error", "median"),
             mean_l2_loss=("ratio_l2_loss", "mean"),
             mean_norm_l2_loss=("ratio_l2_loss_norm", "mean"),
         )
         .reset_index()
-        .sort_values("mean_norm_l2_loss", ascending=True)
+        .sort_values("mean_l2_loss", ascending=True)
     )
 
     overall = {
         "responses": int(long_df["is_correct"].count()),
-        "participants": long_df["response_id"].nunique(),
+        "participants": valid_participants,
         "overall_accuracy": float(long_df["is_correct"].mean()),
         "mean_confidence": float(long_df["confidence"].mean()),
     }
@@ -353,6 +353,25 @@ def summarize(long_df: pd.DataFrame) -> dict:
         "trial_type_summary": trial_type_summary,
         "overall": overall,
     }
+
+
+def build_accuracy_display(df: pd.DataFrame, label_col: str, label_name: str) -> pd.DataFrame:
+    """Prepare a human-readable accuracy table for logging/output."""
+
+    columns = [label_col, "responses", "accuracy"]
+    if "mean_confidence" in df.columns:
+        columns.append("mean_confidence")
+
+    display = df[columns].copy()
+    display.rename(columns={label_col: label_name}, inplace=True)
+    display["accuracy (%)"] = (display["accuracy"] * 100).round(1)
+    display.drop(columns="accuracy", inplace=True)
+
+    if "mean_confidence" in display.columns:
+        display["mean_confidence"] = display["mean_confidence"].round(2)
+        display.rename(columns={"mean_confidence": "Mean Confidence"}, inplace=True)
+
+    return display[[label_name, "responses", "accuracy (%)"] + (["Mean Confidence"] if "Mean Confidence" in display.columns else [])]
 
 
 def save_tables(summaries: dict) -> None:
@@ -370,66 +389,94 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
     design_summary = summaries["design_summary"]
     trial_type_summary = summaries["trial_type_summary"]
 
+    plot_accuracy_order = (
+        design_summary.sort_values("accuracy", ascending=False)["plot_type"].tolist()
+    )
     fig, ax = plt.subplots(figsize=(10, 6))
     sns.barplot(
         data=design_summary,
         y="plot_type",
-        x="mean_norm_l2_loss",
+        x="accuracy",
+        order=plot_accuracy_order,
+        ax=ax,
+    )
+    ax.set_xlabel("Accuracy")
+    ax.set_ylabel("Plot type")
+    ax.set_xlim(0, 1)
+    ax.set_title("Accuracy by Plot Type")
+    ax.xaxis.set_major_formatter(PercentFormatter(xmax=1))
+    fig.tight_layout()
+    fig.savefig(OUTPUT_DIR / "accuracy_by_plot_type.png", dpi=300)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.barplot(
+        data=design_summary,
+        y="plot_type",
+        x="mean_l2_loss",
         order=design_summary["plot_type"],
         ax=ax,
     )
-    ax.set_xlabel("Normalized L2 loss (lower is better)")
+    ax.set_xlabel("Mean L2 loss")
     ax.set_ylabel("Plot type")
-    ax.set_xlim(0, 0.05)
-    ax.set_title("Normalized L2 Loss by Plot Type")
-    for idx, row in design_summary.iterrows():
-        value = row["mean_norm_l2_loss"]
-        if pd.isna(value):
-            continue
-        ax.text(
-            min(value + 0.01, 0.98),
-            idx,
-            f"{value:.2f}",
-            va="center",
-            ha="left",
-        )
+    ax.set_title("Mean L2 Loss by Plot Type")
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "accuracy_by_plot_type.png", dpi=300)
+    fig.savefig(OUTPUT_DIR / "l2_loss_by_plot_type.png", dpi=300)
+    plt.close(fig)
+
+    trial_accuracy_order = (
+        trial_type_summary.sort_values("accuracy", ascending=False)["trial_type"].tolist()
+    )
+    fig, ax = plt.subplots(figsize=(8, 4))
+    sns.barplot(
+        data=trial_type_summary,
+        x="trial_type",
+        y="accuracy",
+        order=trial_accuracy_order,
+        ax=ax,
+    )
+    ax.set_xlabel("Trial type")
+    ax.set_ylabel("Accuracy")
+    ax.set_title("Accuracy by Scenario")
+    ax.set_ylim(0, 1)
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1))
+    ax.tick_params(axis="x", rotation=20)
+    fig.tight_layout()
+    fig.savefig(OUTPUT_DIR / "accuracy_by_trial_type.png", dpi=300)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(8, 4))
     sns.barplot(
         data=trial_type_summary,
         x="trial_type",
-        y="mean_norm_l2_loss",
+        y="mean_l2_loss",
         order=trial_type_summary["trial_type"],
         ax=ax,
     )
-    ax.set_ylim(0, 0.05)
     ax.set_xlabel("Trial type")
-    ax.set_ylabel("Normalized L2 loss (lower is better)")
-    ax.set_title("Normalized L2 Loss by Scenario")
+    ax.set_ylabel("Mean L2 loss")
+    ax.set_title("Mean L2 Loss by Scenario")
     ax.tick_params(axis="x", rotation=20)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "accuracy_by_trial_type.png", dpi=300)
+    fig.savefig(OUTPUT_DIR / "l2_loss_by_trial_type.png", dpi=300)
     plt.close(fig)
 
-    ratio_df = long_df.dropna(subset=["pct_ratio_error"])
+    ratio_df = long_df.dropna(subset=["ratio_l2_loss"])
     if not ratio_df.empty:
         fig, ax = plt.subplots(figsize=(9, 5))
         sns.boxplot(
             data=ratio_df,
             x="trial_type",
-            y="pct_ratio_error",
+            y="ratio_l2_loss",
             ax=ax,
             order=trial_type_summary["trial_type"],
         )
         ax.set_xlabel("Trial type")
-        ax.set_ylabel("Ratio error (relative)")
-        ax.set_title("Distribution of Ratio Errors by Scenario")
+        ax.set_ylabel("Ratio L2 loss")
+        ax.set_title("Distribution of Ratio L2 Loss by Scenario")
         ax.tick_params(axis="x", rotation=20)
         fig.tight_layout()
-        fig.savefig(OUTPUT_DIR / "ratio_error_by_trial_type.png", dpi=300)
+        fig.savefig(OUTPUT_DIR / "ratio_l2_loss_by_trial_type.png", dpi=300)
         plt.close(fig)
 
 
@@ -459,20 +506,31 @@ def main() -> None:
     make_plots(long_df, summaries)
 
     overall = summaries["overall"]
-    print("=== Overall Summary ===")
-    print(
-        f"Participants: {overall['participants']} | "
-        f"Responses: {overall['responses']} | "
-        f"Accuracy: {overall['overall_accuracy']:.3f} | "
-        f"Mean confidence: {overall['mean_confidence']:.2f}"
+    logger.info("=== Overall Summary ===")
+    logger.info(
+        "Participants (valid): %s | Responses: %s | Accuracy: %.3f | Mean confidence: %.2f",
+        overall["participants"],
+        overall["responses"],
+        overall["overall_accuracy"],
+        overall["mean_confidence"],
     )
+
+    design_accuracy_table = build_accuracy_display(
+        summaries["design_summary"], "plot_type", "Plot Type"
+    )
+    trial_accuracy_table = build_accuracy_display(
+        summaries["trial_type_summary"], "trial_type", "Trial Type"
+    )
+
+    logger.info("=== Accuracy by Plot Type ===\n%s", design_accuracy_table.to_string(index=False))
+    logger.info("=== Accuracy by Trial Type ===\n%s", trial_accuracy_table.to_string(index=False))
+
     design_display = summaries["design_summary"][
         [
             "plot_type",
             "responses",
             "mean_norm_l2_loss",
             "mean_l2_loss",
-            "accuracy",
         ]
     ]
     trial_display = summaries["trial_type_summary"][
@@ -481,13 +539,16 @@ def main() -> None:
             "responses",
             "mean_norm_l2_loss",
             "mean_l2_loss",
-            "accuracy",
         ]
     ]
-    print("\n=== Normalized L2 by Plot Type ===")
-    print(design_display.to_string(index=False, float_format="{:.3f}".format))
-    print("\n=== Normalized L2 by Trial Type ===")
-    print(trial_display.to_string(index=False, float_format="{:.3f}".format))
+    logger.info(
+        "=== Normalized L2 by Plot Type ===\n%s",
+        design_display.to_string(index=False, float_format="{:.3f}".format),
+    )
+    logger.info(
+        "=== Normalized L2 by Trial Type ===\n%s",
+        trial_display.to_string(index=False, float_format="{:.3f}".format),
+    )
 
 
 if __name__ == "__main__":
