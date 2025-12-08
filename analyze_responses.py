@@ -246,14 +246,14 @@ def prepare_long_form(
             else:
                 true_ratio = left_sd / right_sd
 
-            l2_loss = np.nan
+            l1_loss = np.nan
             if (
                 ratio_guess is not None
                 and pd.notna(true_ratio)
                 and true_ratio > 0
                 and ratio_guess > 0
             ):
-                l2_loss = (ratio_guess - true_ratio) ** 2
+                l1_loss = abs(ratio_guess - true_ratio)
 
             more_variable = trial_meta["More_Variable"]
             is_correct = np.nan
@@ -282,7 +282,7 @@ def prepare_long_form(
                     "is_correct": is_correct,
                     "confidence": confidence,
                     "ratio_guess": ratio_guess,
-                    "ratio_l2_loss": l2_loss,
+                    "ratio_l1_loss": l1_loss,
                     "comment": comment_val,
                 }
             )
@@ -295,14 +295,14 @@ def prepare_long_form(
     # Treat raw-data overlay as a binary factor independent of jitter.
     df["raw_display"] = np.where(df["points"].str.lower() == "points on", "Points On", "Points Off")
 
-    if df["ratio_l2_loss"].notna().any():
-        max_l2 = df["ratio_l2_loss"].max()
-        if pd.notna(max_l2) and max_l2 > 0:
-            df["ratio_l2_loss_norm"] = df["ratio_l2_loss"] / max_l2
+    if df["ratio_l1_loss"].notna().any():
+        max_l1 = df["ratio_l1_loss"].max()
+        if pd.notna(max_l1) and max_l1 > 0:
+            df["ratio_l1_loss_norm"] = df["ratio_l1_loss"] / max_l1
         else:
-            df["ratio_l2_loss_norm"] = 0.0
+            df["ratio_l1_loss_norm"] = 0.0
     else:
-        df["ratio_l2_loss_norm"] = np.nan
+        df["ratio_l1_loss_norm"] = np.nan
 
     return df
 
@@ -321,11 +321,11 @@ def summarize(long_df: pd.DataFrame) -> dict:
             accuracy=("is_correct", "mean"),
             mean_confidence=("confidence", "mean"),
             median_ratio_guess=("ratio_guess", "median"),
-            mean_l2_loss=("ratio_l2_loss", "mean"),
-            mean_norm_l2_loss=("ratio_l2_loss_norm", "mean"),
+            mean_l1_loss=("ratio_l1_loss", "mean"),
+            mean_norm_l1_loss=("ratio_l1_loss_norm", "mean"),
         )
         .reset_index()
-        .sort_values("mean_l2_loss", ascending=True)
+        .sort_values("mean_l1_loss", ascending=True)
     )
 
     whisker_summary = (
@@ -335,11 +335,11 @@ def summarize(long_df: pd.DataFrame) -> dict:
             accuracy=("is_correct", "mean"),
             mean_confidence=("confidence", "mean"),
             median_ratio_guess=("ratio_guess", "median"),
-            mean_l2_loss=("ratio_l2_loss", "mean"),
-            mean_norm_l2_loss=("ratio_l2_loss_norm", "mean"),
+            mean_l1_loss=("ratio_l1_loss", "mean"),
+            mean_norm_l1_loss=("ratio_l1_loss_norm", "mean"),
         )
         .reset_index()
-        .sort_values("mean_l2_loss", ascending=True)
+        .sort_values("mean_l1_loss", ascending=True)
     )
 
     raw_display_summary = (
@@ -349,11 +349,11 @@ def summarize(long_df: pd.DataFrame) -> dict:
             accuracy=("is_correct", "mean"),
             mean_confidence=("confidence", "mean"),
             median_ratio_guess=("ratio_guess", "median"),
-            mean_l2_loss=("ratio_l2_loss", "mean"),
-            mean_norm_l2_loss=("ratio_l2_loss_norm", "mean"),
+            mean_l1_loss=("ratio_l1_loss", "mean"),
+            mean_norm_l1_loss=("ratio_l1_loss_norm", "mean"),
         )
         .reset_index()
-        .sort_values("mean_l2_loss", ascending=True)
+        .sort_values("mean_l1_loss", ascending=True)
     )
 
     trial_type_summary = (
@@ -362,11 +362,11 @@ def summarize(long_df: pd.DataFrame) -> dict:
             responses=("is_correct", "count"),
             accuracy=("is_correct", "mean"),
             mean_confidence=("confidence", "mean"),
-            mean_l2_loss=("ratio_l2_loss", "mean"),
-            mean_norm_l2_loss=("ratio_l2_loss_norm", "mean"),
+            mean_l1_loss=("ratio_l1_loss", "mean"),
+            mean_norm_l1_loss=("ratio_l1_loss_norm", "mean"),
         )
         .reset_index()
-        .sort_values("mean_l2_loss", ascending=True)
+        .sort_values("mean_l1_loss", ascending=True)
     )
 
     overall = {
@@ -489,15 +489,15 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
     sns.barplot(
         data=design_summary,
         y="plot_type",
-        x="mean_l2_loss",
+        x="mean_l1_loss",
         order=design_summary["plot_type"],
         ax=ax,
     )
-    ax.set_xlabel("Mean L2 loss")
+    ax.set_xlabel("Mean L1 loss")
     ax.set_ylabel("Plot type")
-    ax.set_title("Mean L2 Loss by Plot Type")
+    ax.set_title("Mean L1 Loss by Plot Type")
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "l2_loss_by_plot_type.png", dpi=300)
+    fig.savefig(OUTPUT_DIR / "l1_loss_by_plot_type.png", dpi=300)
     plt.close(fig)
 
     if not whisker_summary.empty:
@@ -505,15 +505,15 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
         sns.barplot(
             data=whisker_summary,
             x="whisker",
-            y="mean_l2_loss",
+            y="mean_l1_loss",
             order=whisker_summary["whisker"],
             ax=ax,
         )
         ax.set_xlabel("Whisker rule")
-        ax.set_ylabel("Mean L2 loss")
-        ax.set_title("Mean L2 Loss by Whisker Rule")
+        ax.set_ylabel("Mean L1 loss")
+        ax.set_title("Mean L1 Loss by Whisker Rule")
         fig.tight_layout()
-        fig.savefig(OUTPUT_DIR / "l2_loss_by_whisker_rule.png", dpi=300)
+        fig.savefig(OUTPUT_DIR / "l1_loss_by_whisker_rule.png", dpi=300)
         plt.close(fig)
 
     if not raw_display_summary.empty:
@@ -521,15 +521,15 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
         sns.barplot(
             data=raw_display_summary,
             x="raw_display",
-            y="mean_l2_loss",
+            y="mean_l1_loss",
             order=raw_display_summary["raw_display"],
             ax=ax,
         )
         ax.set_xlabel("Raw data display")
-        ax.set_ylabel("Mean L2 loss")
-        ax.set_title("Mean L2 Loss by Raw-Data Display")
+        ax.set_ylabel("Mean L1 loss")
+        ax.set_title("Mean L1 Loss by Raw-Data Display")
         fig.tight_layout()
-        fig.savefig(OUTPUT_DIR / "l2_loss_by_raw_display.png", dpi=300)
+        fig.savefig(OUTPUT_DIR / "l1_loss_by_raw_display.png", dpi=300)
         plt.close(fig)
 
     trial_accuracy_order = (
@@ -557,34 +557,34 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
     sns.barplot(
         data=trial_type_summary,
         x="trial_type",
-        y="mean_l2_loss",
+        y="mean_l1_loss",
         order=trial_type_summary["trial_type"],
         ax=ax,
     )
     ax.set_xlabel("Trial type")
-    ax.set_ylabel("Mean L2 loss")
-    ax.set_title("Mean L2 Loss by Scenario")
+    ax.set_ylabel("Mean L1 loss")
+    ax.set_title("Mean L1 Loss by Scenario")
     ax.tick_params(axis="x", rotation=20)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "l2_loss_by_trial_type.png", dpi=300)
+    fig.savefig(OUTPUT_DIR / "l1_loss_by_trial_type.png", dpi=300)
     plt.close(fig)
 
-    ratio_df = long_df.dropna(subset=["ratio_l2_loss"])
+    ratio_df = long_df.dropna(subset=["ratio_l1_loss"])
     if not ratio_df.empty:
         fig, ax = plt.subplots(figsize=(9, 5))
         sns.boxplot(
             data=ratio_df,
             x="trial_type",
-            y="ratio_l2_loss",
+            y="ratio_l1_loss",
             ax=ax,
             order=trial_type_summary["trial_type"],
         )
         ax.set_xlabel("Trial type")
-        ax.set_ylabel("Ratio L2 loss")
-        ax.set_title("Distribution of Ratio L2 Loss by Scenario")
+        ax.set_ylabel("Ratio L1 loss")
+        ax.set_title("Distribution of Ratio L1 Loss by Scenario")
         ax.tick_params(axis="x", rotation=20)
         fig.tight_layout()
-        fig.savefig(OUTPUT_DIR / "ratio_l2_loss_by_trial_type.png", dpi=300)
+        fig.savefig(OUTPUT_DIR / "ratio_l1_loss_by_trial_type.png", dpi=300)
         plt.close(fig)
 
 
@@ -645,48 +645,48 @@ def main() -> None:
         [
             "plot_type",
             "responses",
-            "mean_norm_l2_loss",
-            "mean_l2_loss",
+            "mean_norm_l1_loss",
+            "mean_l1_loss",
         ]
     ]
     whisker_display = summaries["whisker_summary"][
         [
             "whisker",
             "responses",
-            "mean_norm_l2_loss",
-            "mean_l2_loss",
+            "mean_norm_l1_loss",
+            "mean_l1_loss",
         ]
     ]
     raw_display_display = summaries["raw_display_summary"][
         [
             "raw_display",
             "responses",
-            "mean_norm_l2_loss",
-            "mean_l2_loss",
+            "mean_norm_l1_loss",
+            "mean_l1_loss",
         ]
     ]
     trial_display = summaries["trial_type_summary"][
         [
             "trial_type",
             "responses",
-            "mean_norm_l2_loss",
-            "mean_l2_loss",
+            "mean_norm_l1_loss",
+            "mean_l1_loss",
         ]
     ]
     logger.info(
-        "=== Normalized L2 by Plot Type ===\n%s",
+        "=== Normalized L1 by Plot Type ===\n%s",
         design_display.to_string(index=False, float_format="{:.3f}".format),
     )
     logger.info(
-        "=== Normalized L2 by Whisker Rule ===\n%s",
+        "=== Normalized L1 by Whisker Rule ===\n%s",
         whisker_display.to_string(index=False, float_format="{:.3f}".format),
     )
     logger.info(
-        "=== Normalized L2 by Raw Data Display ===\n%s",
+        "=== Normalized L1 by Raw Data Display ===\n%s",
         raw_display_display.to_string(index=False, float_format="{:.3f}".format),
     )
     logger.info(
-        "=== Normalized L2 by Trial Type ===\n%s",
+        "=== Normalized L1 by Trial Type ===\n%s",
         trial_display.to_string(index=False, float_format="{:.3f}".format),
     )
 
