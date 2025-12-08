@@ -292,6 +292,8 @@ def prepare_long_form(
 
     df = pd.DataFrame(records)
     df["plot_type"] = df["plot_type"].astype("category")
+    # Treat raw-data overlay as a binary factor independent of jitter.
+    df["raw_display"] = np.where(df["points"].str.lower() == "points on", "Points On", "Points Off")
 
     if df["ratio_l2_loss"].notna().any():
         max_l2 = df["ratio_l2_loss"].max()
@@ -312,10 +314,36 @@ def summarize(long_df: pd.DataFrame) -> dict:
     valid_mask = long_df["is_correct"].notna()
     valid_participants = long_df.loc[valid_mask, "response_id"].nunique()
 
-    print(long_df)
-
     design_summary = (
         long_df.groupby("plot_type", observed=True)
+        .agg(
+            responses=("is_correct", "count"),
+            accuracy=("is_correct", "mean"),
+            mean_confidence=("confidence", "mean"),
+            median_ratio_guess=("ratio_guess", "median"),
+            mean_l2_loss=("ratio_l2_loss", "mean"),
+            mean_norm_l2_loss=("ratio_l2_loss_norm", "mean"),
+        )
+        .reset_index()
+        .sort_values("mean_l2_loss", ascending=True)
+    )
+
+    whisker_summary = (
+        long_df.groupby("whisker", observed=True)
+        .agg(
+            responses=("is_correct", "count"),
+            accuracy=("is_correct", "mean"),
+            mean_confidence=("confidence", "mean"),
+            median_ratio_guess=("ratio_guess", "median"),
+            mean_l2_loss=("ratio_l2_loss", "mean"),
+            mean_norm_l2_loss=("ratio_l2_loss_norm", "mean"),
+        )
+        .reset_index()
+        .sort_values("mean_l2_loss", ascending=True)
+    )
+
+    raw_display_summary = (
+        long_df.groupby("raw_display", observed=True)
         .agg(
             responses=("is_correct", "count"),
             accuracy=("is_correct", "mean"),
@@ -350,6 +378,8 @@ def summarize(long_df: pd.DataFrame) -> dict:
 
     return {
         "design_summary": design_summary,
+        "whisker_summary": whisker_summary,
+        "raw_display_summary": raw_display_summary,
         "trial_type_summary": trial_type_summary,
         "overall": overall,
     }
@@ -378,6 +408,12 @@ def save_tables(summaries: dict) -> None:
     summaries["design_summary"].to_csv(
         OUTPUT_DIR / "accuracy_by_plot_type.csv", index=False
     )
+    summaries["whisker_summary"].to_csv(
+        OUTPUT_DIR / "accuracy_by_whisker_rule.csv", index=False
+    )
+    summaries["raw_display_summary"].to_csv(
+        OUTPUT_DIR / "accuracy_by_raw_display.csv", index=False
+    )
     summaries["trial_type_summary"].to_csv(
         OUTPUT_DIR / "accuracy_by_trial_type.csv", index=False
     )
@@ -387,6 +423,8 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
     """Generate jpeg/png summaries describing the findings."""
 
     design_summary = summaries["design_summary"]
+    whisker_summary = summaries["whisker_summary"]
+    raw_display_summary = summaries["raw_display_summary"]
     trial_type_summary = summaries["trial_type_summary"]
 
     plot_accuracy_order = (
@@ -409,6 +447,44 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
     fig.savefig(OUTPUT_DIR / "accuracy_by_plot_type.png", dpi=300)
     plt.close(fig)
 
+    if not whisker_summary.empty:
+        whisker_order = whisker_summary.sort_values("accuracy", ascending=False)["whisker"].tolist()
+        fig, ax = plt.subplots(figsize=(6, 4))
+        sns.barplot(
+            data=whisker_summary,
+            x="whisker",
+            y="accuracy",
+            order=whisker_order,
+            ax=ax,
+        )
+        ax.set_xlabel("Whisker rule")
+        ax.set_ylabel("Accuracy")
+        ax.set_ylim(0, 1)
+        ax.set_title("Accuracy by Whisker Rule")
+        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1))
+        fig.tight_layout()
+        fig.savefig(OUTPUT_DIR / "accuracy_by_whisker_rule.png", dpi=300)
+        plt.close(fig)
+
+    if not raw_display_summary.empty:
+        display_order = raw_display_summary.sort_values("accuracy", ascending=False)["raw_display"].tolist()
+        fig, ax = plt.subplots(figsize=(6, 4))
+        sns.barplot(
+            data=raw_display_summary,
+            x="raw_display",
+            y="accuracy",
+            order=display_order,
+            ax=ax,
+        )
+        ax.set_xlabel("Raw data display")
+        ax.set_ylabel("Accuracy")
+        ax.set_ylim(0, 1)
+        ax.set_title("Accuracy by Raw-Data Display")
+        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1))
+        fig.tight_layout()
+        fig.savefig(OUTPUT_DIR / "accuracy_by_raw_display.png", dpi=300)
+        plt.close(fig)
+
     fig, ax = plt.subplots(figsize=(10, 6))
     sns.barplot(
         data=design_summary,
@@ -423,6 +499,38 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "l2_loss_by_plot_type.png", dpi=300)
     plt.close(fig)
+
+    if not whisker_summary.empty:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        sns.barplot(
+            data=whisker_summary,
+            x="whisker",
+            y="mean_l2_loss",
+            order=whisker_summary["whisker"],
+            ax=ax,
+        )
+        ax.set_xlabel("Whisker rule")
+        ax.set_ylabel("Mean L2 loss")
+        ax.set_title("Mean L2 Loss by Whisker Rule")
+        fig.tight_layout()
+        fig.savefig(OUTPUT_DIR / "l2_loss_by_whisker_rule.png", dpi=300)
+        plt.close(fig)
+
+    if not raw_display_summary.empty:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        sns.barplot(
+            data=raw_display_summary,
+            x="raw_display",
+            y="mean_l2_loss",
+            order=raw_display_summary["raw_display"],
+            ax=ax,
+        )
+        ax.set_xlabel("Raw data display")
+        ax.set_ylabel("Mean L2 loss")
+        ax.set_title("Mean L2 Loss by Raw-Data Display")
+        fig.tight_layout()
+        fig.savefig(OUTPUT_DIR / "l2_loss_by_raw_display.png", dpi=300)
+        plt.close(fig)
 
     trial_accuracy_order = (
         trial_type_summary.sort_values("accuracy", ascending=False)["trial_type"].tolist()
@@ -518,16 +626,40 @@ def main() -> None:
     design_accuracy_table = build_accuracy_display(
         summaries["design_summary"], "plot_type", "Plot Type"
     )
+    whisker_accuracy_table = build_accuracy_display(
+        summaries["whisker_summary"], "whisker", "Whisker Rule"
+    )
+    raw_display_accuracy_table = build_accuracy_display(
+        summaries["raw_display_summary"], "raw_display", "Raw Data Display"
+    )
     trial_accuracy_table = build_accuracy_display(
         summaries["trial_type_summary"], "trial_type", "Trial Type"
     )
 
     logger.info("=== Accuracy by Plot Type ===\n%s", design_accuracy_table.to_string(index=False))
+    logger.info("=== Accuracy by Whisker Rule ===\n%s", whisker_accuracy_table.to_string(index=False))
+    logger.info("=== Accuracy by Raw Data Display ===\n%s", raw_display_accuracy_table.to_string(index=False))
     logger.info("=== Accuracy by Trial Type ===\n%s", trial_accuracy_table.to_string(index=False))
 
     design_display = summaries["design_summary"][
         [
             "plot_type",
+            "responses",
+            "mean_norm_l2_loss",
+            "mean_l2_loss",
+        ]
+    ]
+    whisker_display = summaries["whisker_summary"][
+        [
+            "whisker",
+            "responses",
+            "mean_norm_l2_loss",
+            "mean_l2_loss",
+        ]
+    ]
+    raw_display_display = summaries["raw_display_summary"][
+        [
+            "raw_display",
             "responses",
             "mean_norm_l2_loss",
             "mean_l2_loss",
@@ -544,6 +676,14 @@ def main() -> None:
     logger.info(
         "=== Normalized L2 by Plot Type ===\n%s",
         design_display.to_string(index=False, float_format="{:.3f}".format),
+    )
+    logger.info(
+        "=== Normalized L2 by Whisker Rule ===\n%s",
+        whisker_display.to_string(index=False, float_format="{:.3f}".format),
+    )
+    logger.info(
+        "=== Normalized L2 by Raw Data Display ===\n%s",
+        raw_display_display.to_string(index=False, float_format="{:.3f}".format),
     )
     logger.info(
         "=== Normalized L2 by Trial Type ===\n%s",
