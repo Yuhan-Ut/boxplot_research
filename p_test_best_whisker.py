@@ -57,16 +57,16 @@ def bonferroni_adjust(p_values: List[float]) -> List[float]:
 def whisker_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, str]:
     pivot = (
         long_df.dropna(subset=["is_correct"])
-        .groupby(["response_id", "whisker"], observed=True)["is_correct"]
+        .groupby(["response_id", "whisker"], observed=True, sort=False)["is_correct"]
         .mean()
         .unstack("whisker")
     )
 
-    means = pivot.mean(axis=0, skipna=True).sort_values(ascending=False)
+    means = pivot.mean(axis=0, skipna=True)
     if means.empty:
         raise RuntimeError("No whisker accuracy data found for statistical testing.")
 
-    best = means.index[0]
+    best = means.idxmax()
     results = []
 
     for whisker in means.index:
@@ -116,9 +116,7 @@ def whisker_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, str]:
     for res, adj_p in zip(results, adjusted):
         res["p_value_bonferroni"] = adj_p
 
-    results_df = pd.DataFrame(results).sort_values(
-        ["p_value_bonferroni", "mean_diff"], ascending=[True, False]
-    )
+    results_df = pd.DataFrame(results)
     return results_df, means, best
 
 
@@ -130,16 +128,16 @@ def ratio_loss_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, st
         raise RuntimeError("No ratio loss data available for statistical testing.")
 
     pivot = (
-        df.groupby(["response_id", "whisker"], observed=True)["ratio_l1_loss"]
+        df.groupby(["response_id", "whisker"], observed=True, sort=False)["ratio_l1_loss"]
         .mean()
         .unstack("whisker")
     )
 
-    mean_losses = pivot.mean(axis=0, skipna=True).sort_values(ascending=True)
+    mean_losses = pivot.mean(axis=0, skipna=True)
     if mean_losses.empty:
         raise RuntimeError("No ratio loss data available for statistical testing.")
 
-    best = mean_losses.index[0]
+    best = mean_losses.idxmin()
     results = []
 
     for whisker in mean_losses.index:
@@ -183,9 +181,7 @@ def ratio_loss_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, st
     for res, adj_p in zip(results, adjusted):
         res["p_value_bonferroni"] = adj_p
 
-    results_df = pd.DataFrame(results).sort_values(
-        ["p_value_bonferroni", "mean_diff"], ascending=[True, False]
-    )
+    results_df = pd.DataFrame(results)
     return results_df, mean_losses, best
 
 
@@ -202,16 +198,16 @@ def composite_score_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Serie
     df["composite_score"] = 1.0 * df["is_correct"] - 1.0 * df["ratio_l1_loss_norm"]
 
     pivot = (
-        df.groupby(["response_id", "whisker"], observed=True)["composite_score"]
+        df.groupby(["response_id", "whisker"], observed=True, sort=False)["composite_score"]
         .mean()
         .unstack("whisker")
     )
 
-    mean_scores = pivot.mean(axis=0, skipna=True).sort_values(ascending=False)
+    mean_scores = pivot.mean(axis=0, skipna=True)
     if mean_scores.empty:
         raise RuntimeError("No composite-score data available for statistical testing.")
 
-    best = mean_scores.index[0]
+    best = mean_scores.idxmax()
     results = []
 
     for whisker in mean_scores.index:
@@ -255,9 +251,7 @@ def composite_score_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Serie
     for res, adj_p in zip(results, adjusted):
         res["p_value_bonferroni"] = adj_p
 
-    results_df = pd.DataFrame(results).sort_values(
-        ["p_value_bonferroni", "mean_diff"], ascending=[True, False]
-    )
+    results_df = pd.DataFrame(results)
     return results_df, mean_scores, best
 
 
@@ -301,7 +295,7 @@ def run_ols_vs_best(
         }
     ).reset_index(drop=True)
 
-    out.to_csv(output_path, index=False)
+    out.to_csv(output_path, index=False, float_format="%.2f")
     return out
 
 
@@ -355,16 +349,16 @@ def main() -> None:
     ratio_ranking_path = OUTPUT_DIR / "whisker_ratio_loss_ranking.csv"
     composite_results_path = OUTPUT_DIR / "paired_ttests_composite_best_whisker.csv"
     composite_ranking_path = OUTPUT_DIR / "whisker_composite_score_ranking.csv"
-    results_df.to_csv(results_path, index=False)
-    means.to_csv(ranking_path, header=["mean_accuracy"])
-    ratio_results_df.to_csv(ratio_results_path, index=False)
-    ratio_means.to_csv(ratio_ranking_path, header=["mean_ratio_l1_loss"])
-    composite_results_df.to_csv(composite_results_path, index=False)
-    composite_means.to_csv(composite_ranking_path, header=["mean_composite_score"])
+    results_df.to_csv(results_path, index=False, float_format="%.2f")
+    means.to_csv(ranking_path, header=["mean_accuracy"], float_format="%.2f")
+    ratio_results_df.to_csv(ratio_results_path, index=False, float_format="%.2f")
+    ratio_means.to_csv(ratio_ranking_path, header=["mean_ratio_l1_loss"], float_format="%.2f")
+    composite_results_df.to_csv(composite_results_path, index=False, float_format="%.2f")
+    composite_means.to_csv(composite_ranking_path, header=["mean_composite_score"], float_format="%.2f")
 
-    logger.info("Best whisker rule: %s (mean accuracy = %.3f)", best, best_acc)
-    logger.info("Best whisker (lowest ratio loss): %s (mean ratio L1 = %.3f)", best_ratio, best_ratio_loss)
-    logger.info("Best whisker (composite score): %s (mean score = %.3f)", best_composite, best_composite_score)
+    logger.info("Best whisker rule: %s (mean accuracy = %.2f)", best, best_acc)
+    logger.info("Best whisker (lowest ratio loss): %s (mean ratio L1 = %.2f)", best_ratio, best_ratio_loss)
+    logger.info("Best whisker (composite score): %s (mean score = %.2f)", best_composite, best_composite_score)
     logger.info("Whisker ranking saved to %s", ranking_path)
     logger.info("Pairwise test results saved to %s", results_path)
     logger.info("Ratio-loss ranking saved to %s", ratio_ranking_path)
@@ -377,7 +371,7 @@ def main() -> None:
         logger.info("OLS ratio loss vs. best saved to %s", ols_ratio_path)
     if ols_composite is not None:
         logger.info("OLS composite vs. best saved to %s", ols_composite_path)
-    logger.info("Top comparisons:\n%s", results_df.head().to_string(index=False))
+    logger.info("Top comparisons:\n%s", results_df.head().to_string(index=False, float_format="%.2f"))
 
 
 if __name__ == "__main__":

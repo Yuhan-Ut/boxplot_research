@@ -92,6 +92,16 @@ CHOICE_MAP = {
     "plot b": "Right",
 }
 
+# Preserve the canonical ordering for plot types when displaying results/plots.
+PLOT_TYPE_ORDER = [
+    "MinMax - Points Off",
+    "MinMax - Points On (No Jitter)",
+    "MinMax - Points On (Jitter)",
+    "Tukey - Points Off",
+    "Tukey - Points On (No Jitter)",
+    "Tukey - Points On (Jitter)",
+]
+
 
 def normalize_choice(value: object) -> Optional[str]:
     """Reduce free-text multiple choice answers to Left/Right/Equal."""
@@ -294,7 +304,7 @@ def prepare_long_form(
         raise RuntimeError("No response records were produced; check the input data.")
 
     df = pd.DataFrame(records)
-    df["plot_type"] = df["plot_type"].astype("category")
+    df["plot_type"] = pd.Categorical(df["plot_type"], categories=PLOT_TYPE_ORDER, ordered=True)
     # Treat raw-data overlay as a binary factor independent of jitter.
     df["raw_display"] = np.where(df["points"].str.lower() == "points on", "Points On", "Points Off")
 
@@ -318,7 +328,7 @@ def summarize(long_df: pd.DataFrame) -> dict:
     valid_participants = long_df.loc[valid_mask, "response_id"].nunique()
 
     design_summary = (
-        long_df.groupby("plot_type", observed=True)
+        long_df.groupby("plot_type", observed=True, sort=False)
         .agg(
             responses=("is_correct", "count"),
             accuracy=("is_correct", "mean"),
@@ -328,11 +338,14 @@ def summarize(long_df: pd.DataFrame) -> dict:
             mean_norm_l1_loss=("ratio_l1_loss_norm", "mean"),
         )
         .reset_index()
-        .sort_values("mean_l1_loss", ascending=True)
     )
+    design_summary["plot_type"] = pd.Categorical(
+        design_summary["plot_type"], categories=PLOT_TYPE_ORDER, ordered=True
+    )
+    design_summary = design_summary.sort_values("plot_type")
 
     whisker_summary = (
-        long_df.groupby("whisker", observed=True)
+        long_df.groupby("whisker", observed=True, sort=False)
         .agg(
             responses=("is_correct", "count"),
             accuracy=("is_correct", "mean"),
@@ -342,11 +355,10 @@ def summarize(long_df: pd.DataFrame) -> dict:
             mean_norm_l1_loss=("ratio_l1_loss_norm", "mean"),
         )
         .reset_index()
-        .sort_values("mean_l1_loss", ascending=True)
     )
 
     raw_display_summary = (
-        long_df.groupby("raw_display", observed=True)
+        long_df.groupby("raw_display", observed=True, sort=False)
         .agg(
             responses=("is_correct", "count"),
             accuracy=("is_correct", "mean"),
@@ -356,11 +368,10 @@ def summarize(long_df: pd.DataFrame) -> dict:
             mean_norm_l1_loss=("ratio_l1_loss_norm", "mean"),
         )
         .reset_index()
-        .sort_values("mean_l1_loss", ascending=True)
     )
 
     trial_type_summary = (
-        long_df.groupby("trial_type", observed=True)
+        long_df.groupby("trial_type", observed=True, sort=False)
         .agg(
             responses=("is_correct", "count"),
             accuracy=("is_correct", "mean"),
@@ -369,7 +380,6 @@ def summarize(long_df: pd.DataFrame) -> dict:
             mean_norm_l1_loss=("ratio_l1_loss_norm", "mean"),
         )
         .reset_index()
-        .sort_values("mean_l1_loss", ascending=True)
     )
 
     overall = {
@@ -397,7 +407,7 @@ def build_accuracy_display(df: pd.DataFrame, label_col: str, label_name: str) ->
 
     display = df[columns].copy()
     display.rename(columns={label_col: label_name}, inplace=True)
-    display["accuracy (%)"] = (display["accuracy"] * 100).round(1)
+    display["accuracy (%)"] = (display["accuracy"] * 100).round(2)
     display.drop(columns="accuracy", inplace=True)
 
     if "mean_confidence" in display.columns:
@@ -409,16 +419,16 @@ def build_accuracy_display(df: pd.DataFrame, label_col: str, label_name: str) ->
 
 def save_tables(summaries: dict) -> None:
     summaries["design_summary"].to_csv(
-        OUTPUT_DIR / "accuracy_by_plot_type.csv", index=False
+        OUTPUT_DIR / "accuracy_by_plot_type.csv", index=False, float_format="%.2f"
     )
     summaries["whisker_summary"].to_csv(
-        OUTPUT_DIR / "accuracy_by_whisker_rule.csv", index=False
+        OUTPUT_DIR / "accuracy_by_whisker_rule.csv", index=False, float_format="%.2f"
     )
     summaries["raw_display_summary"].to_csv(
-        OUTPUT_DIR / "accuracy_by_raw_display.csv", index=False
+        OUTPUT_DIR / "accuracy_by_raw_display.csv", index=False, float_format="%.2f"
     )
     summaries["trial_type_summary"].to_csv(
-        OUTPUT_DIR / "accuracy_by_trial_type.csv", index=False
+        OUTPUT_DIR / "accuracy_by_trial_type.csv", index=False, float_format="%.2f"
     )
 
 
@@ -430,9 +440,9 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
     raw_display_summary = summaries["raw_display_summary"]
     trial_type_summary = summaries["trial_type_summary"]
 
-    plot_accuracy_order = (
-        design_summary.sort_values("accuracy", ascending=False)["plot_type"].tolist()
-    )
+    plot_accuracy_order = [
+        pt for pt in PLOT_TYPE_ORDER if pt in design_summary["plot_type"].unique()
+    ]
     fig, ax = plt.subplots(figsize=(10, 6))
     sns.barplot(
         data=design_summary,
@@ -451,7 +461,7 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
     plt.close(fig)
 
     if not whisker_summary.empty:
-        whisker_order = whisker_summary.sort_values("accuracy", ascending=False)["whisker"].tolist()
+        whisker_order = whisker_summary["whisker"].tolist()
         fig, ax = plt.subplots(figsize=(6, 4))
         sns.barplot(
             data=whisker_summary,
@@ -470,7 +480,7 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
         plt.close(fig)
 
     if not raw_display_summary.empty:
-        display_order = raw_display_summary.sort_values("accuracy", ascending=False)["raw_display"].tolist()
+        display_order = raw_display_summary["raw_display"].tolist()
         fig, ax = plt.subplots(figsize=(6, 4))
         sns.barplot(
             data=raw_display_summary,
@@ -493,7 +503,7 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
         data=design_summary,
         y="plot_type",
         x="mean_l1_loss",
-        order=design_summary["plot_type"],
+        order=plot_accuracy_order,
         ax=ax,
     )
     ax.set_xlabel("Mean L1 loss")
@@ -535,9 +545,7 @@ def make_plots(long_df: pd.DataFrame, summaries: dict) -> None:
         fig.savefig(OUTPUT_DIR / "l1_loss_by_raw_display.png", dpi=300)
         plt.close(fig)
 
-    trial_accuracy_order = (
-        trial_type_summary.sort_values("accuracy", ascending=False)["trial_type"].tolist()
-    )
+    trial_accuracy_order = trial_type_summary["trial_type"].tolist()
     fig, ax = plt.subplots(figsize=(8, 4))
     sns.barplot(
         data=trial_type_summary,
@@ -619,7 +627,7 @@ def main() -> None:
     overall = summaries["overall"]
     logger.info("=== Overall Summary ===")
     logger.info(
-        "Participants (valid): %s | Responses: %s | Accuracy: %.3f | Mean confidence: %.2f",
+        "Participants (valid): %s | Responses: %s | Accuracy: %.2f | Mean confidence: %.2f",
         overall["participants"],
         overall["responses"],
         overall["overall_accuracy"],
@@ -639,10 +647,22 @@ def main() -> None:
         summaries["trial_type_summary"], "trial_type", "Trial Type"
     )
 
-    logger.info("=== Accuracy by Plot Type ===\n%s", design_accuracy_table.to_string(index=False))
-    logger.info("=== Accuracy by Whisker Rule ===\n%s", whisker_accuracy_table.to_string(index=False))
-    logger.info("=== Accuracy by Raw Data Display ===\n%s", raw_display_accuracy_table.to_string(index=False))
-    logger.info("=== Accuracy by Trial Type ===\n%s", trial_accuracy_table.to_string(index=False))
+    logger.info(
+        "=== Accuracy by Plot Type ===\n%s",
+        design_accuracy_table.to_string(index=False, float_format="{:.2f}".format),
+    )
+    logger.info(
+        "=== Accuracy by Whisker Rule ===\n%s",
+        whisker_accuracy_table.to_string(index=False, float_format="{:.2f}".format),
+    )
+    logger.info(
+        "=== Accuracy by Raw Data Display ===\n%s",
+        raw_display_accuracy_table.to_string(index=False, float_format="{:.2f}".format),
+    )
+    logger.info(
+        "=== Accuracy by Trial Type ===\n%s",
+        trial_accuracy_table.to_string(index=False, float_format="{:.2f}".format),
+    )
 
     design_display = summaries["design_summary"][
         [
@@ -678,19 +698,19 @@ def main() -> None:
     ]
     logger.info(
         "=== Normalized L1 by Plot Type ===\n%s",
-        design_display.to_string(index=False, float_format="{:.3f}".format),
+        design_display.to_string(index=False, float_format="{:.2f}".format),
     )
     logger.info(
         "=== Normalized L1 by Whisker Rule ===\n%s",
-        whisker_display.to_string(index=False, float_format="{:.3f}".format),
+        whisker_display.to_string(index=False, float_format="{:.2f}".format),
     )
     logger.info(
         "=== Normalized L1 by Raw Data Display ===\n%s",
-        raw_display_display.to_string(index=False, float_format="{:.3f}".format),
+        raw_display_display.to_string(index=False, float_format="{:.2f}".format),
     )
     logger.info(
         "=== Normalized L1 by Trial Type ===\n%s",
-        trial_display.to_string(index=False, float_format="{:.3f}".format),
+        trial_display.to_string(index=False, float_format="{:.2f}".format),
     )
 
 
