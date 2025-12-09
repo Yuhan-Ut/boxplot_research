@@ -118,6 +118,142 @@ def whisker_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, str]:
     return results_df, means, best
 
 
+def ratio_loss_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, str]:
+    """Run tests on ratio L1 loss (lower is better) for whisker rules."""
+
+    df = long_df.dropna(subset=["ratio_l1_loss"]).copy()
+    if df.empty:
+        raise RuntimeError("No ratio loss data available for statistical testing.")
+
+    pivot = (
+        df.groupby(["response_id", "whisker"], observed=True)["ratio_l1_loss"]
+        .mean()
+        .unstack("whisker")
+    )
+
+    mean_losses = pivot.mean(axis=0, skipna=True).sort_values(ascending=True)
+    if mean_losses.empty:
+        raise RuntimeError("No ratio loss data available for statistical testing.")
+
+    best = mean_losses.index[0]
+    results = []
+
+    for whisker in mean_losses.index:
+        if whisker == best:
+            continue
+
+        paired = pivot[[best, whisker]].dropna()
+        test_type = "paired"
+        if not paired.empty:
+            t_stat, p_val = stats.ttest_rel(paired[whisker], paired[best])
+            mean_diff = paired[whisker].mean() - paired[best].mean()
+            n_pairs = len(paired)
+        else:
+            best_vals = pivot[best].dropna()
+            other_vals = pivot[whisker].dropna()
+            if len(best_vals) < 2 or len(other_vals) < 2:
+                continue
+            test_type = "welch"
+            t_stat, p_val = stats.ttest_ind(other_vals, best_vals, equal_var=False)
+            mean_diff = other_vals.mean() - best_vals.mean()
+            n_pairs = min(len(best_vals), len(other_vals))
+
+        results.append(
+            {
+                "best_whisker": best,
+                "comparison_whisker": whisker,
+                "test_type": test_type,
+                "n_pairs": n_pairs,
+                "mean_loss_best": pivot[best].mean(),
+                "mean_loss_other": pivot[whisker].mean(),
+                "mean_diff": mean_diff,
+                "t_stat": t_stat,
+                "p_value": p_val,
+            }
+        )
+
+    if not results:
+        raise RuntimeError("No overlapping observations available to compare whisker rules (ratio loss).")
+
+    adjusted = bonferroni_adjust([r["p_value"] for r in results])
+    for res, adj_p in zip(results, adjusted):
+        res["p_value_bonferroni"] = adj_p
+
+    results_df = pd.DataFrame(results).sort_values(
+        ["p_value_bonferroni", "mean_diff"], ascending=[True, False]
+    )
+    return results_df, mean_losses, best
+
+
+def composite_score_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, str]:
+    """Run tests on composite score: w_acc*is_correct - w_loss*ratio_l1_loss_norm (higher is better)."""
+
+    df = long_df.dropna(subset=["is_correct", "ratio_l1_loss_norm"]).copy()
+    if df.empty:
+        raise RuntimeError("No composite-score data available for statistical testing.")
+
+    df["composite_score"] = 1.0 * df["is_correct"] - 1.0 * df["ratio_l1_loss_norm"]
+
+    pivot = (
+        df.groupby(["response_id", "whisker"], observed=True)["composite_score"]
+        .mean()
+        .unstack("whisker")
+    )
+
+    mean_scores = pivot.mean(axis=0, skipna=True).sort_values(ascending=False)
+    if mean_scores.empty:
+        raise RuntimeError("No composite-score data available for statistical testing.")
+
+    best = mean_scores.index[0]
+    results = []
+
+    for whisker in mean_scores.index:
+        if whisker == best:
+            continue
+
+        paired = pivot[[best, whisker]].dropna()
+        test_type = "paired"
+        if not paired.empty:
+            t_stat, p_val = stats.ttest_rel(paired[best], paired[whisker])
+            mean_diff = paired[best].mean() - paired[whisker].mean()
+            n_pairs = len(paired)
+        else:
+            best_vals = pivot[best].dropna()
+            other_vals = pivot[whisker].dropna()
+            if len(best_vals) < 2 or len(other_vals) < 2:
+                continue
+            test_type = "welch"
+            t_stat, p_val = stats.ttest_ind(best_vals, other_vals, equal_var=False)
+            mean_diff = best_vals.mean() - other_vals.mean()
+            n_pairs = min(len(best_vals), len(other_vals))
+
+        results.append(
+            {
+                "best_whisker": best,
+                "comparison_whisker": whisker,
+                "test_type": test_type,
+                "n_pairs": n_pairs,
+                "mean_score_best": pivot[best].mean(),
+                "mean_score_other": pivot[whisker].mean(),
+                "mean_diff": mean_diff,
+                "t_stat": t_stat,
+                "p_value": p_val,
+            }
+        )
+
+    if not results:
+        raise RuntimeError("No overlapping observations available to compare whisker rules (composite score).")
+
+    adjusted = bonferroni_adjust([r["p_value"] for r in results])
+    for res, adj_p in zip(results, adjusted):
+        res["p_value_bonferroni"] = adj_p
+
+    results_df = pd.DataFrame(results).sort_values(
+        ["p_value_bonferroni", "mean_diff"], ascending=[True, False]
+    )
+    return results_df, mean_scores, best
+
+
 def _extract_level(param_name: str) -> str:
     if "T." in param_name:
         return param_name.split("T.", 1)[1]
@@ -172,11 +308,25 @@ def main() -> None:
     results_df, means, best = whisker_tests(long_df)
     best_acc = means.loc[best]
 
+    ratio_results_df, ratio_means, best_ratio = ratio_loss_tests(long_df)
+    best_ratio_loss = ratio_means.loc[best_ratio]
+
+    composite_results_df, composite_means, best_composite = composite_score_tests(long_df)
+    best_composite_score = composite_means.loc[best_composite]
+
     results_path = OUTPUT_DIR / "paired_ttests_best_whisker.csv"
     ranking_path = OUTPUT_DIR / "whisker_accuracy_ranking.csv"
+    ratio_results_path = OUTPUT_DIR / "paired_ttests_ratio_best_whisker.csv"
+    ratio_ranking_path = OUTPUT_DIR / "whisker_ratio_loss_ranking.csv"
+    composite_results_path = OUTPUT_DIR / "paired_ttests_composite_best_whisker.csv"
+    composite_ranking_path = OUTPUT_DIR / "whisker_composite_score_ranking.csv"
     logit_path = OUTPUT_DIR / "logit_whisker_vs_best.csv"
     results_df.to_csv(results_path, index=False)
     means.to_csv(ranking_path, header=["mean_accuracy"])
+    ratio_results_df.to_csv(ratio_results_path, index=False)
+    ratio_means.to_csv(ratio_ranking_path, header=["mean_ratio_l1_loss"])
+    composite_results_df.to_csv(composite_results_path, index=False)
+    composite_means.to_csv(composite_ranking_path, header=["mean_composite_score"])
     logit_results = run_logit_vs_best(
         long_df=long_df,
         factor_col="whisker",
@@ -185,8 +335,14 @@ def main() -> None:
     )
 
     logger.info("Best whisker rule: %s (mean accuracy = %.3f)", best, best_acc)
+    logger.info("Best whisker (lowest ratio loss): %s (mean ratio L1 = %.3f)", best_ratio, best_ratio_loss)
+    logger.info("Best whisker (composite score): %s (mean score = %.3f)", best_composite, best_composite_score)
     logger.info("Whisker ranking saved to %s", ranking_path)
     logger.info("Pairwise test results saved to %s", results_path)
+    logger.info("Ratio-loss ranking saved to %s", ratio_ranking_path)
+    logger.info("Ratio-loss pairwise results saved to %s", ratio_results_path)
+    logger.info("Composite ranking saved to %s", composite_ranking_path)
+    logger.info("Composite pairwise results saved to %s", composite_results_path)
     if logit_results is not None:
         logger.info("Logit odds ratios vs. best saved to %s", logit_path)
         logger.info("Top logit rows:\n%s", logit_results.head().to_string(index=False))
