@@ -30,8 +30,12 @@ from analyze_responses import (
     load_question_groups,
     prepare_long_form,
 )
-import statsmodels.formula.api as smf
-from statsmodels.tools.sm_exceptions import PerfectSeparationError
+try:
+    import statsmodels.formula.api as smf
+except ImportError as exc:  # pragma: no cover - runtime guard
+    raise ImportError(
+        "statsmodels is required for OLS tests. Install with `pip install statsmodels`."
+    ) from exc
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "analysis_outputs"
 W_ACC = 1.0
@@ -62,6 +66,18 @@ def bonferroni_adjust(p_values: List[float]) -> List[float]:
 
     count = len(p_values)
     return [min(p * count, 1.0) for p in p_values]
+
+
+def ensure_composite_score(df: pd.DataFrame) -> pd.DataFrame:
+    """Add composite_score = w_acc*is_correct - w_loss*ratio_l1_loss_norm."""
+
+    if "composite_score" in df.columns:
+        return df
+    df = df.copy()
+    if "ratio_l1_loss_norm" not in df.columns:
+        return df
+    df["composite_score"] = W_ACC * df["is_correct"] - W_LOSS * df["ratio_l1_loss_norm"]
+    return df
 
 
 def paired_design_tests(
@@ -150,12 +166,6 @@ def paired_design_tests(
     return results_df, design_means, best_design
 
 
-def _extract_level(param_name: str) -> str:
-    if "T." in param_name:
-        return param_name.split("T.", 1)[1]
-    return param_name
-
-
 def ratio_loss_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, str]:
     """Run tests on ratio L1 loss (lower is better)."""
 
@@ -226,7 +236,7 @@ def ratio_loss_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, st
 def composite_score_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, str]:
     """Run tests on composite score: w_acc*is_correct - w_loss*ratio_l1_loss_norm (higher is better)."""
 
-    df = long_df.dropna(subset=["is_correct", "ratio_l1_loss_norm"]).copy()
+    df = ensure_composite_score(long_df).dropna(subset=["is_correct", "ratio_l1_loss_norm", "composite_score"]).copy()
     if df.empty:
         raise RuntimeError("No composite-score data available for statistical testing.")
 
@@ -292,43 +302,50 @@ def composite_score_tests(long_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Serie
     return results_df, mean_scores, best
 
 
-def run_logit_vs_best(
-    long_df: pd.DataFrame, factor_col: str, best_level: str, output_path: Path
+def run_ols_vs_best(
+    long_df: pd.DataFrame, factor_col: str, outcome_col: str, best_level: str, output_path: Path
 ) -> Optional[pd.DataFrame]:
-    """Fit logistic regression with best level as reference; cluster SE by respondent."""
+    """OLS with best level as reference; HC3 robust SEs."""
 
-    df = long_df.dropna(subset=["is_correct", factor_col]).copy()
+    df = long_df.dropna(subset=[outcome_col, factor_col]).copy()
     if df.empty:
         return None
 
     df[factor_col] = df[factor_col].astype(str)
+    formula = f"{outcome_col} ~ C({factor_col}, Treatment(reference='{best_level}'))"
+    model = smf.ols(formula=formula, data=df)
+    fit = model.fit(cov_type="HC3")
 
-    formula = f"is_correct ~ C({factor_col}, Treatment(reference='{best_level}'))"
-    try:
-        model = smf.logit(formula=formula, data=df)
-        fit = model.fit(disp=False, cov_type="cluster", cov_kwds={"groups": df["response_id"]})
-    except PerfectSeparationError:
-        logger.warning("Perfect separation encountered for %s; skipping logit.", factor_col)
-        return None
+    params = fit.params
+    bse = fit.bse
+    t_vals = fit.tvalues
+    p_vals = fit.pvalues
+    conf = fit.conf_int()
 
-    params = fit.params.drop("Intercept", errors="ignore")
-    conf = fit.conf_int().loc[params.index]
-    odds = params.apply(np.exp)
-    ci_lower = conf[0].apply(np.exp)
-    ci_upper = conf[1].apply(np.exp)
+    def clean_term(name: str) -> str:
+        if name == "Intercept":
+            return "_cons"
+        marker = f"C({factor_col})[T."
+        if marker in name:
+            return name.split("[T.", 1)[1].rstrip("]")
+        return name
 
     out = pd.DataFrame(
         {
-            "level_vs_best": [_extract_level(name) for name in params.index],
-            "odds_ratio": odds,
-            "ci_lower": ci_lower,
-            "ci_upper": ci_upper,
-            "p_value": fit.pvalues.loc[params.index],
+            "term": [clean_term(name) for name in params.index],
+            "coef": params,
+            "std_err": bse,
+            "t": t_vals,
+            "p_value": p_vals,
+            "ci_lower": conf[0],
+            "ci_upper": conf[1],
         }
     ).reset_index(drop=True)
 
     out.to_csv(output_path, index=False)
     return out
+
+
 
 
 def main() -> None:
@@ -346,6 +363,33 @@ def main() -> None:
     composite_results_df, composite_means, best_design_composite = composite_score_tests(long_df)
     best_composite = composite_means.loc[best_design_composite]
 
+    # OLS regressions (HC3 robust SEs) using the best level as reference
+    ols_accuracy_path = OUTPUT_DIR / "ols_accuracy_plot_type_vs_best.csv"
+    ols_ratio_path = OUTPUT_DIR / "ols_ratio_plot_type_vs_best.csv"
+    ols_composite_path = OUTPUT_DIR / "ols_composite_plot_type_vs_best.csv"
+    long_df = ensure_composite_score(long_df)
+    ols_accuracy = run_ols_vs_best(
+        long_df=long_df,
+        factor_col="plot_type",
+        outcome_col="is_correct",
+        best_level=best_design,
+        output_path=ols_accuracy_path,
+    )
+    ols_ratio = run_ols_vs_best(
+        long_df=long_df,
+        factor_col="plot_type",
+        outcome_col="ratio_l1_loss",
+        best_level=best_design_ratio,
+        output_path=ols_ratio_path,
+    )
+    ols_composite = run_ols_vs_best(
+        long_df=long_df,
+        factor_col="plot_type",
+        outcome_col="composite_score",
+        best_level=best_design_composite,
+        output_path=ols_composite_path,
+    )
+
     results_path = OUTPUT_DIR / "paired_ttests_best_design.csv"
     design_ranking_path = OUTPUT_DIR / "design_accuracy_ranking.csv"
     ratio_results_path = OUTPUT_DIR / "paired_ttests_ratio_best_design.csv"
@@ -359,15 +403,6 @@ def main() -> None:
     composite_results_df.to_csv(composite_results_path, index=False)
     composite_means.to_csv(composite_ranking_path, header=["mean_composite_score"])
 
-    # Logistic regression comparing designs with best design as reference.
-    logit_path = OUTPUT_DIR / "logit_plot_type_vs_best.csv"
-    logit_results = run_logit_vs_best(
-        long_df=long_df,
-        factor_col="plot_type",
-        best_level=best_design,
-        output_path=logit_path,
-    )
-
     logger.info("Best design: %s (mean accuracy = %.3f)", best_design, best_accuracy)
     logger.info("Best design (lowest ratio loss): %s (mean ratio L1 = %.3f)", best_design_ratio, best_ratio)
     logger.info("Best design (composite score): %s (mean score = %.3f)", best_design_composite, best_composite)
@@ -377,9 +412,12 @@ def main() -> None:
     logger.info("Ratio-loss pairwise results saved to %s", ratio_results_path)
     logger.info("Composite ranking saved to %s", composite_ranking_path)
     logger.info("Composite pairwise results saved to %s", composite_results_path)
-    if logit_results is not None:
-        logger.info("Logit odds ratios vs. best saved to %s", logit_path)
-        logger.info("Top logit rows:\n%s", logit_results.head().to_string(index=False))
+    if ols_accuracy is not None:
+        logger.info("OLS accuracy vs. best saved to %s", ols_accuracy_path)
+    if ols_ratio is not None:
+        logger.info("OLS ratio loss vs. best saved to %s", ols_ratio_path)
+    if ols_composite is not None:
+        logger.info("OLS composite vs. best saved to %s", ols_composite_path)
     logger.info("Top comparisons:\n%s", results_df.head().to_string(index=False))
 
 
